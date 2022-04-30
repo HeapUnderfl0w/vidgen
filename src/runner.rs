@@ -1,21 +1,17 @@
 use std::{
-	ffi::OsStr,
-	path::{Path, PathBuf},
+	path::PathBuf,
 	process::Stdio,
 };
 
 use anyhow::Context;
-use futures::{Future, StreamExt};
+use futures::{StreamExt};
 use once_cell::sync::Lazy;
 use regex::Regex;
 use tokio::{
 	fs::{self, File},
 	io::BufReader,
 	process::{Child, Command},
-	sync::{
-		mpsc::{channel, Receiver, Sender},
-		Notify,
-	},
+	sync::mpsc::{channel, Receiver, Sender},
 	task::JoinHandle,
 };
 use tokio_stream::wrappers::ReadDirStream;

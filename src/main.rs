@@ -187,7 +187,7 @@ async fn program(args: Args) -> anyhow::Result<()> {
 
 	if let Some(extra_args) = args.extra_arg {
 		for arg in extra_args {
-			let mut p = arg.splitn(2, "=");
+			let mut p = arg.splitn(2, '=');
 			let k = p.next().unwrap();
 			let v = p.next();
 			match v {
@@ -247,7 +247,7 @@ async fn program(args: Args) -> anyhow::Result<()> {
 }
 
 fn parse_resolution(s: &str) -> anyhow::Result<(u32, u32)> {
-	let p: Vec<_> = s.split("x").collect();
+	let p: Vec<_> = s.split('x').collect();
 	if p.len() != 2 {
 		anyhow::bail!("the dimension must be specified as `WIDTHxHEIGHT` (example: `1920x1080`)");
 	}
