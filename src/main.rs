@@ -15,6 +15,7 @@ mod x264;
 
 fn main() {
 	let args = Args::parse();
+	let wait = args.wait;
 
 	let result = tokio::runtime::Builder::new_multi_thread()
 		.enable_all()
@@ -25,8 +26,28 @@ fn main() {
 
 	if let Err(why) = result {
 		eprintln!("error: {:?}", why);
+		if wait {
+			wait_before_exit();
+		}
 		std::process::exit(1);
 	}
+
+	if wait {
+		wait_before_exit();
+	}
+}
+
+fn wait_before_exit() {
+	use std::io::{stdin, BufRead, BufReader};
+
+	println!("Press [Enter] to exit.");
+
+	let stdin = stdin();
+	let mut read = BufReader::new(stdin.lock());
+
+	let mut _garbage = String::new();
+	read.read_line(&mut _garbage)
+		.expect("failed to read any input from stdin");
 }
 
 /// Encode a pile of frames into a video file.
@@ -72,6 +93,10 @@ struct Args {
 	/// The x264 encoder tuning to use
 	#[clap(long, arg_enum, name = "TUNING")]
 	x264_tune: Option<x264::X264Tune>,
+
+	/// Wait for the user to press a button before exiting
+	#[clap(short, long)]
+	wait: bool,
 }
 
 #[derive(Debug, serde::Deserialize)]
