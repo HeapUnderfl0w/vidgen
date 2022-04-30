@@ -1,0 +1,41 @@
+# VidGen
+
+A tool to convert a bunch of frames into a video
+
+NOTE: This tool is destructive and will remove each frame after it has been read
+
+## Help Page
+
+```
+vidgen 1.0.0
+HeapUnderflow <heapunderflow@outlook.com>
+Encode a pile of frames into a video file
+
+USAGE:
+    vidgen.exe [OPTIONS] <SOURCE> <TARGET>
+
+ARGS:
+    <SOURCE>    The source directory to read frames from
+    <TARGET>    The target file to write to. This will truncate by default
+
+OPTIONS:
+        --crf <CRF>                  Instruct the encoder to use the given constant bitrate
+        --extra-arg <EXTRA_ARG>      Extra args passed as-is to ffmpeg. They will be included after
+                                     the default arguments but before the output argument
+    -f, --fps <FPS>                  Target fps [default: 60]
+        --ffmpeg <FFMPEG>            Override the path to the ffmpeg binary directory (it should
+                                     contain ffmpeg and ffprobe)
+    -h, --help                       Print help information
+    -i, --input-dim <INPUT_DIM>      Dimensions of the frame files [default: auto]
+    -o, --output-dim <OUTPUT_DIM>    Dimensions of the output video [default: 1920x1080]
+    -V, --version                    Print version information
+        --x264-preset <PRESET>       The x264 encoder preset to use [default: medium] [possible
+                                     values: ultrafast, superfast, veryfast, faster, fast, medium,
+                                     slow, slower, veryslow]
+        --x264-tune <TUNING>         The x264 encoder tuning to use [possible values: film,
+                                     animation, grain, still-image, fast-decode, zero-latency]
+```
+
+## License
+
+See link:NOTICE[NOTICE] and link:LICENSE[LICENSE]
