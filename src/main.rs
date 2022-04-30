@@ -201,7 +201,14 @@ async fn program(args: Args) -> anyhow::Result<()> {
 				pbar.inc(1);
 			},
 			Message::Stop { time } => {
-				pbar.finish_with_message(format!("done, took {}", farg_time(time)))
+				pbar.finish_with_message(format!(
+					"done, took {}",
+					indicatif::HumanDuration(std::time::Duration::new(
+						time.whole_seconds() as u64,
+						time.subsec_nanoseconds() as u32
+					))
+				));
+				break;
 			},
 			Message::Start { frames: _ } => unreachable!("should never appear twice"),
 		}
@@ -210,10 +217,6 @@ async fn program(args: Args) -> anyhow::Result<()> {
 	runner.join().await.context("failed to wait for task")?;
 
 	Ok(())
-}
-
-fn farg_time(t: time::Duration) -> String {
-	format!("{:02}:{:02}:{:02}.{:03}", t.whole_hours(), t.whole_minutes(), t.whole_seconds(), t.whole_milliseconds())
 }
 
 fn parse_resolution(s: &str) -> anyhow::Result<(u32, u32)> {
