@@ -1,11 +1,8 @@
-use std::{
-	path::PathBuf,
-	process::Stdio,
-};
+use std::{path::PathBuf, process::Stdio};
 
 use anyhow::Context;
-use futures::StreamExt;
 use clap::Parser;
+use futures::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
 use tokio::process::Command;
 use tokio_stream::wrappers::ReadDirStream;
@@ -74,7 +71,7 @@ struct Args {
 
 	/// The x264 encoder tuning to use
 	#[clap(long, arg_enum, name = "TUNING")]
-	x264_tune: Option<x264::X264Tune>
+	x264_tune: Option<x264::X264Tune>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -89,14 +86,15 @@ struct FfprobeRes {
 }
 
 macro_rules! ffarg {
-	($c:ident, $arg:expr) => {{(&mut $c).arg($arg);}};
+	($c:ident, $arg:expr) => {{
+		(&mut $c).arg($arg);
+	}};
 	($c:ident, $arg:expr, $val:expr) => {{
 		(&mut $c).arg($arg).arg($val);
-	}}
+	}};
 }
 
 async fn program(args: Args) -> anyhow::Result<()> {
-
 	let ffmpeg = ffmpeg::ensure_ffmpeg_dir(args.ffmpeg.clone())
 		.await
 		.context("ffmpeg discovery failed")?;
@@ -132,12 +130,11 @@ async fn program(args: Args) -> anyhow::Result<()> {
 				.context("failed to parse stream info from ffprobe")?;
 			(fdt.streams[0].width, fdt.streams[0].height)
 		},
-		exact => {
-			parse_resolution(exact).context("failed to parse input resolution")?
-		},
+		exact => parse_resolution(exact).context("failed to parse input resolution")?,
 	};
 
-	let (target_width, target_height) = parse_resolution(&args.output_dim).context("failed to parse output resolution")?;
+	let (target_width, target_height) =
+		parse_resolution(&args.output_dim).context("failed to parse output resolution")?;
 
 	let mut com = Command::new(ffmpeg.ffmpeg());
 	ffarg!(com, "-y");
@@ -149,7 +146,11 @@ async fn program(args: Args) -> anyhow::Result<()> {
 	ffarg!(com, "-vcodec", "libx264");
 	ffarg!(com, "-pix_fmt", "yuv420p");
 	ffarg!(com, "-preset", args.x264_preset.to_string());
-	ffarg!(com, "-vf", format!("scale={target_width}x{target_height}:flags=bicubic"));
+	ffarg!(
+		com,
+		"-vf",
+		format!("scale={target_width}x{target_height}:flags=bicubic")
+	);
 
 	if let Some(tune) = args.x264_tune {
 		ffarg!(com, "-tune", tune.to_string());
@@ -166,24 +167,25 @@ async fn program(args: Args) -> anyhow::Result<()> {
 			let v = p.next();
 			match v {
 				Some(v) => ffarg!(com, k, v),
-				None => ffarg!(com, k)
+				None => ffarg!(com, k),
 			}
 		}
 	}
 
 	ffarg!(com, args.target);
 
-	let mut runner = runner::Runner::start(com, PathBuf::from(args.source)).context("failed to start ffmpeg")?;
-	
+	let mut runner =
+		runner::Runner::start(com, PathBuf::from(args.source)).context("failed to start ffmpeg")?;
+
 	let framen = match runner.event().await {
 		Some(Message::Start { frames }) => frames,
-		_ => anyhow::bail!("somehow missed start message")
+		_ => anyhow::bail!("somehow missed start message"),
 	};
 
 	let pbar = ProgressBar::new(framen).with_style(
-		ProgressStyle::default_bar().progress_chars(
-			"#$-"
-		).template("ETA {eta} | {pos}/{len} [{wide_bar:.light.green/light.blue}] {msg}")
+		ProgressStyle::default_bar()
+			.progress_chars("#$-")
+			.template("ETA {eta} | {pos}/{len} [{wide_bar:.light.green/light.blue}] {msg}"),
 	);
 
 	loop {
@@ -221,16 +223,13 @@ async fn program(args: Args) -> anyhow::Result<()> {
 
 fn parse_resolution(s: &str) -> anyhow::Result<(u32, u32)> {
 	let p: Vec<_> = s.split("x").collect();
-			if p.len() != 2 {
-				anyhow::bail!(
-					"the dimension must be specified as `WIDTHxHEIGHT` (example: \
-					 `1920x1080`)"
-				);
-			}
+	if p.len() != 2 {
+		anyhow::bail!("the dimension must be specified as `WIDTHxHEIGHT` (example: `1920x1080`)");
+	}
 
-			let w = p[0].parse().context("width is not an integer")?;
-			let h = p[1].parse().context("height is not an integer")?;
-			Ok((w, h))
+	let w = p[0].parse().context("width is not an integer")?;
+	let h = p[1].parse().context("height is not an integer")?;
+	Ok((w, h))
 }
 
 async fn find_ident_frame(path: &str) -> anyhow::Result<String> {

@@ -1,6 +1,7 @@
 use std::{
 	ffi::OsStr,
-	path::{Path, PathBuf}, process::Stdio,
+	path::{Path, PathBuf},
+	process::Stdio,
 };
 
 use anyhow::Context;
@@ -8,7 +9,7 @@ use futures::{Future, StreamExt};
 use once_cell::sync::Lazy;
 use regex::Regex;
 use tokio::{
-	fs::{File, self},
+	fs::{self, File},
 	io::BufReader,
 	process::{Child, Command},
 	sync::{
@@ -41,7 +42,12 @@ pub struct Frame(pub u64, pub PathBuf);
 
 impl Runner {
 	pub fn start(mut command: Command, source: PathBuf) -> anyhow::Result<RunnerHandle> {
-		let child = command.stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().context("failed to start ffmpeg process")?;
+		let child = command
+			.stdin(Stdio::piped())
+			.stdout(Stdio::null())
+			.stderr(Stdio::null())
+			.spawn()
+			.context("failed to start ffmpeg process")?;
 		let (notify_tx, notify_rx) = channel(64);
 
 		let runner = Runner {
@@ -98,7 +104,9 @@ impl Runner {
 				.await
 				.context("failed to stream frame")?;
 
-			fs::remove_file(&frame.1).await.context("failed to remove frame")?;
+			fs::remove_file(&frame.1)
+				.await
+				.context("failed to remove frame")?;
 		}
 
 		snd_chk!(
@@ -125,13 +133,9 @@ pub struct RunnerHandle {
 }
 
 impl RunnerHandle {
-	pub async fn join(self) -> anyhow::Result<()> {
-		self.task.await.context("await failed")?
-	}
+	pub async fn join(self) -> anyhow::Result<()> { self.task.await.context("await failed")? }
 
-	pub async fn event(&mut self) -> Option<Message> {
-		self.events.recv().await
-	}
+	pub async fn event(&mut self) -> Option<Message> { self.events.recv().await }
 }
 
 #[derive(Debug)]
