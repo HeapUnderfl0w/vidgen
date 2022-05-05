@@ -12,6 +12,7 @@ use crate::runner::Message;
 mod ffmpeg;
 mod runner;
 mod x264;
+mod quirks;
 
 fn main() {
 	let args = Args::parse();
@@ -97,6 +98,10 @@ struct Args {
 	/// Wait for the user to press a button before exiting
 	#[clap(short, long)]
 	wait: bool,
+
+	/// Switch to keysight quirks mode
+	#[clap(long)]
+	keysight: bool
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -199,8 +204,10 @@ async fn program(args: Args) -> anyhow::Result<()> {
 
 	ffarg!(com, args.target);
 
+	let source_path = PathBuf::from(args.source);
+
 	let mut runner =
-		runner::Runner::start(com, PathBuf::from(args.source)).context("failed to start ffmpeg")?;
+		runner::Runner::start(com, source_path.clone()).context("failed to start ffmpeg")?;
 
 	let framen = match runner.event().await {
 		Some(Message::Start { frames }) => frames,
@@ -213,6 +220,12 @@ async fn program(args: Args) -> anyhow::Result<()> {
 			.template("ETA {eta} | {pos}/{len} [{wide_bar:.light.green/light.blue}] {msg}"),
 	);
 
+	let quirks = if args.keysight {
+		pbar.println("entering keysight quirks mode");
+
+		Some(quirks::KeysightQuirks::start(source_path, framen))
+	} else { None };
+
 	loop {
 		let event = match runner.event().await {
 			Some(event) => event,
@@ -224,6 +237,7 @@ async fn program(args: Args) -> anyhow::Result<()> {
 
 		match event {
 			Message::Frame { fid, path: _ } => {
+				if let Some(q) = quirks.as_ref() { q.push_msg(event) }
 				pbar.set_message(format!("frame {}", fid));
 				pbar.inc(1);
 			},
@@ -242,6 +256,7 @@ async fn program(args: Args) -> anyhow::Result<()> {
 	}
 
 	runner.join().await.context("failed to wait for task")?;
+	if let Some(q) = quirks { q.stop().await?; }
 
 	Ok(())
 }
