@@ -204,6 +204,12 @@ async fn program(args: Args) -> anyhow::Result<()> {
 
 	ffarg!(com, args.target);
 
+	#[cfg(windows)]
+	{
+		const CREATE_NO_WINDOW: u32 = 0x08000000;
+		com.creation_flags(CREATE_NO_WINDOW);
+	}
+
 	let source_path = PathBuf::from(args.source);
 
 	let mut runner =
