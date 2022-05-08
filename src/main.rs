@@ -124,13 +124,14 @@ macro_rules! ffarg {
 	}};
 }
 
+const DIM_AUTO: &str = "auto";
 async fn program(args: Args) -> anyhow::Result<()> {
-	let ffmpeg = ffmpeg::ensure_ffmpeg_dir(args.ffmpeg.clone())
+	let ffmpeg = ffmpeg::ensure_ffmpeg_dir(args.ffmpeg.clone(), args.input_dim == DIM_AUTO)
 		.await
 		.context("ffmpeg discovery failed")?;
 
 	let (frame_width, frame_height): (u32, u32) = match args.input_dim.as_str() {
-		"auto" => {
+		v if v == DIM_AUTO => {
 			let ident_frame = find_ident_frame(&args.source)
 				.await
 				.context("failed to find ident frame")?;

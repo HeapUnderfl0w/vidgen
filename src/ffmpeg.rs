@@ -42,7 +42,7 @@ impl Ffmpeg {
 	pub fn ffmpeg(&self) -> PathBuf { self.path_for_name(ffmpeg_names::FFMPEG) }
 }
 
-pub async fn ensure_ffmpeg_dir(dir: Option<String>) -> anyhow::Result<Ffmpeg> {
+pub async fn ensure_ffmpeg_dir(dir: Option<String>, need_ffprobe: bool) -> anyhow::Result<Ffmpeg> {
 	if let Some(path) = dir {
 		let ffmpeg = Ffmpeg::new_with_path(path.clone());
 		if !Path::exists(&ffmpeg.ffmpeg()) {
@@ -52,7 +52,7 @@ pub async fn ensure_ffmpeg_dir(dir: Option<String>) -> anyhow::Result<Ffmpeg> {
 				ffmpeg.ffmpeg().display()
 			);
 		}
-		if !Path::exists(&ffmpeg.ffprobe()) {
+		if need_ffprobe && !Path::exists(&ffmpeg.ffprobe()) {
 			anyhow::bail!(
 				"you specified the path {} but {} does not exist there",
 				path,
@@ -67,9 +67,11 @@ pub async fn ensure_ffmpeg_dir(dir: Option<String>) -> anyhow::Result<Ffmpeg> {
 		program_is_callable(&ffmpeg.ffmpeg())
 			.await
 			.context("cannot find ffmpeg")?;
-		program_is_callable(&ffmpeg.ffprobe())
-			.await
-			.context("cannot find ffprobe")?;
+		if need_ffprobe {
+			program_is_callable(&ffmpeg.ffprobe())
+				.await
+				.context("cannot find ffprobe")?;
+		}
 
 		Ok(ffmpeg)
 	}
