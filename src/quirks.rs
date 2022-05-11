@@ -1,18 +1,18 @@
-use std::path::PathBuf;
-use tokio::sync::{oneshot};
 use crate::runner::Message;
-use std::sync::Arc;
-use std::sync::Mutex;
-use tokio::task::JoinHandle;
 use anyhow::Context;
-use std::time::Duration;
-use std::mem;
+use std::{
+    mem,
+    path::PathBuf,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
+use tokio::{sync::oneshot, task::JoinHandle};
 
 pub struct KeysightQuirks {
-    path: PathBuf,
-    kill: oneshot::Receiver<()>,
+    path:    PathBuf,
+    kill:    oneshot::Receiver<()>,
     message: Arc<Mutex<Option<Message>>>,
-    total: u64
+    total:   u64,
 }
 
 impl KeysightQuirks {
@@ -22,13 +22,18 @@ impl KeysightQuirks {
         let (kill_tx, kill_rx) = oneshot::channel();
         let last_message = Arc::new(Mutex::new(None));
         let handle_msg = Arc::clone(&last_message);
-        let quirks = KeysightQuirks { path, kill: kill_rx, message: handle_msg, total };
+        let quirks = KeysightQuirks {
+            path,
+            kill: kill_rx,
+            message: handle_msg,
+            total,
+        };
         let handle = tokio::spawn(quirks.run());
 
         KeysightQuirksHandle {
-            task: handle,
+            task:   handle,
             events: last_message,
-            kill: kill_tx
+            kill:   kill_tx,
         }
     }
 
@@ -46,8 +51,8 @@ impl KeysightQuirks {
 
             let msg = mem::take(&mut *self.message.lock().unwrap());
             let (fid, pth) = match msg {
-                Some(Message::Frame { fid, path }) => (fid,path),
-                _ => continue
+                Some(Message::Frame { fid, path }) => (fid, path),
+                _ => continue,
             };
 
             frames = fid;
@@ -60,36 +65,40 @@ impl KeysightQuirks {
     async fn write_progress(&self, f: u64, t: u64, p: String, d: bool) -> anyhow::Result<()> {
         let json = serde_json::to_string(&ProgressFile {
             frames: f,
-            total: t,
-            path: p,
-            done: d
-        }).context("failed to serialize json")?;
+            total:  t,
+            path:   p,
+            done:   d,
+        })
+        .context("failed to serialize json")?;
 
-        tokio::fs::write(&self.path, json.as_bytes()).await.context("failed to write progress file")
+        tokio::fs::write(&self.path, json.as_bytes())
+            .await
+            .context("failed to write progress file")
     }
 }
 
 pub struct KeysightQuirksHandle {
-    task: JoinHandle<anyhow::Result<()>>,
+    task:   JoinHandle<anyhow::Result<()>>,
     events: Arc<Mutex<Option<Message>>>,
-    kill: oneshot::Sender<()>
+    kill:   oneshot::Sender<()>,
 }
 
 impl KeysightQuirksHandle {
-    pub fn push_msg(&self, msg: Message) {
-        *self.events.lock().unwrap() = Some(msg);
-    }
+    pub fn push_msg(&self, msg: Message) { *self.events.lock().unwrap() = Some(msg); }
 
     pub async fn stop(self) -> anyhow::Result<()> {
         let _ = self.kill.send(());
-        self.task.await.context("failed to wait for quirks task")?.context("failed to wait for quirks task")
+        self.task
+            .await
+            .context("failed to wait for quirks task")?
+            .context("failed to wait for quirks task")
     }
 }
 
 #[derive(Debug, serde::Serialize)]
 struct ProgressFile {
     frames: u64,
-    total: u64,
-    path: String,
-    done: bool
+    total:  u64,
+    path:   String,
+    done:   bool,
 }
