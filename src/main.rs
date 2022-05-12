@@ -216,7 +216,7 @@ async fn program(args: Args) -> anyhow::Result<()> {
     ffarg!(com, "-i", "-");
     if let Some(audio) = args.audio {
         ffarg!(com, "-i", audio.file);
-		ffarg!(com, "-filter_complex", "[1:0]adelay=5s:all=1[ad];[ad]apad[a]");
+		ffarg!(com, "-filter_complex", format!("[1:0]adelay={off}:all=1[ad];[ad]apad[a]", off = (audio.start * 1000.0).trunc() as u64));
 		ffarg!(com, "-map", "0:v:0");
 		ffarg!(com, "-map", "[a]");
         ffarg!(com, "-c:a", "aac");
