@@ -122,7 +122,7 @@ impl FromStr for AudioOptions {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let mut fsplit = s.split(",");
+        let mut fsplit = s.split(',');
 
         let ts = fsplit.next().context("why the fuck?")?;
         let path = fsplit
@@ -205,7 +205,6 @@ async fn program(args: Args) -> anyhow::Result<()> {
     let frames = FrameList::from_dir(&args.source)
         .await
         .context("failed to index frames")?;
-    let target_duration = (1.0 / args.fps as f64) * frames.frames.len() as f64;
 
     let mut com = Command::new(ffmpeg.ffmpeg());
     ffarg!(com, "-y");
@@ -285,14 +284,7 @@ async fn program(args: Args) -> anyhow::Result<()> {
         None
     };
 
-    loop {
-        let event = match runner.event().await {
-            Some(event) => event,
-            None => {
-                break;
-            },
-        };
-
+    while let Some(event) = runner.event().await {
         match event {
             Message::Frame { fid, path: _ } => {
                 if let Some(q) = quirks.as_ref() {
