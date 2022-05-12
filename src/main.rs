@@ -3,8 +3,6 @@ use anyhow::Context;
 use clap::Parser;
 use futures::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
-use once_cell::sync::Lazy;
-use regex::Regex;
 use std::{path::PathBuf, process::Stdio, str::FromStr};
 use tokio::process::Command;
 use tokio_stream::wrappers::ReadDirStream;
@@ -107,6 +105,11 @@ struct Args {
     /// Splice audio into video.
     #[clap(long)]
     audio: Option<AudioOptions>,
+
+	/// print the command line before executing
+	#[clap(long)]
+	debug: bool
+
 }
 
 #[derive(Debug)]
@@ -212,15 +215,12 @@ async fn program(args: Args) -> anyhow::Result<()> {
     ffarg!(com, "-f", "image2pipe");
     ffarg!(com, "-i", "-");
     if let Some(audio) = args.audio {
-        if audio.start > 0.0 {
-            ffarg!(com, "-itsoffset", audio.start.to_string());
-        }
         ffarg!(com, "-i", audio.file);
-        ffarg!(com, "-af", "apad");
-        ffarg!(com, "-map", "0:v");
-        ffarg!(com, "-map", "1:a");
+		ffarg!(com, "-filter_complex", "[1:0]adelay=5s:all=1[ad];[ad]apad[a]");
+		ffarg!(com, "-map", "0:v:0");
+		ffarg!(com, "-map", "[a]");
         ffarg!(com, "-c:a", "aac");
-        ffarg!(com, "-to", target_duration.to_string());
+        // ffarg!(com, "-to", target_duration.to_string());
     }
     ffarg!(com, "-c:v", "libx264");
     ffarg!(com, "-pix_fmt", "yuv420p");
@@ -251,14 +251,16 @@ async fn program(args: Args) -> anyhow::Result<()> {
         }
     }
 
+	ffarg!(com, "-shortest");
     ffarg!(com, args.target);
-    dbg!(&com);
 
     #[cfg(windows)]
     {
         const CREATE_NO_WINDOW: u32 = 0x08000000;
         com.creation_flags(CREATE_NO_WINDOW);
     }
+
+	if args.debug { println!("ffmpeg encode = {com:?}"); }
 
     let source_path = PathBuf::from(args.source);
 
@@ -287,7 +289,6 @@ async fn program(args: Args) -> anyhow::Result<()> {
         let event = match runner.event().await {
             Some(event) => event,
             None => {
-                pbar.finish_at_current_pos();
                 break;
             },
         };
@@ -301,7 +302,7 @@ async fn program(args: Args) -> anyhow::Result<()> {
                 pbar.inc(1);
             },
             Message::Stop { time } => {
-                pbar.finish_with_message(format!(
+                pbar.println(format!(
                     "done, took {}",
                     indicatif::HumanDuration(std::time::Duration::new(
                         time.whole_seconds() as u64,
@@ -315,12 +316,15 @@ async fn program(args: Args) -> anyhow::Result<()> {
     }
 
     runner.join().await.context("failed to wait for task")?;
+
     if let Some(q) = quirks {
         q.stop().await?;
     }
 
     Ok(())
 }
+
+
 
 fn parse_resolution(s: &str) -> anyhow::Result<(u32, u32)> {
     let p: Vec<_> = s.split('x').collect();
