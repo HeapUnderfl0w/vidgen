@@ -15,6 +15,14 @@ pub struct KeysightQuirks {
     total:   u64,
 }
 
+macro_rules! e {
+    ($r:expr) => {{
+        if let Err(why) = $r {
+            println!("error: {:?}", why);
+        }
+    }};
+}
+
 impl KeysightQuirks {
     pub fn start(source_path: PathBuf, total: u64) -> KeysightQuirksHandle {
         let path = source_path.join("_progress.json");
@@ -43,7 +51,7 @@ impl KeysightQuirks {
             tokio::select! {
                 biased;
                 _ = &mut self.kill => {
-                    self.write_progress(frames, self.total, String::new(), true).await?;
+                    e!(self.write_progress(frames, self.total, String::new(), true).await);
                     break;
                 },
                 _ = tokio::time::sleep(Duration::from_secs(1)) => {}
@@ -57,7 +65,7 @@ impl KeysightQuirks {
 
             frames = fid;
 
-            self.write_progress(frames, self.total, pth, false).await?;
+            e!(self.write_progress(frames, self.total, pth, false).await);
         }
         Ok(())
     }
