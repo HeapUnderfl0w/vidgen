@@ -17,6 +17,7 @@
 
         toolchain = pkgs.rust-bin.selectLatestNightlyWith (toolchain: toolchain.default.override {
           extensions = [ "clippy" "rustfmt" "rust-src" "rust-analyzer-preview" ];
+          targets = [ "x86_64-pc-windows-gnu"];
         });
       in
       {
