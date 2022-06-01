@@ -8,8 +8,14 @@ use tokio_stream::wrappers::ReadDirStream;
 pub static NAME_REGEX: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(\d+)\.\w{3,4}").expect("compiled regex is invalid"));
 
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq, Ord)]
 pub struct Frame(pub u64, pub PathBuf);
+
+impl PartialOrd for Frame {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        self.0.partial_cmp(&other.0)
+    }
+}
 
 #[derive(Debug)]
 pub struct FrameList {
@@ -18,7 +24,7 @@ pub struct FrameList {
 
 impl FrameList {
     pub async fn from_dir(dir: &str) -> anyhow::Result<Self> {
-        let frames: Vec<Frame> = ReadDirStream::new(
+        let mut frames: Vec<Frame> = ReadDirStream::new(
             tokio::fs::read_dir(dir)
                 .await
                 .context("failed to list files in source directory")?,
@@ -27,6 +33,8 @@ impl FrameList {
         .filter_map(Self::filter_item)
         .collect()
         .await;
+
+        frames.sort();
 
         Ok(FrameList { frames })
     }
