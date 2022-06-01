@@ -8,8 +8,7 @@ use futures::StreamExt;
 use std::{fs::File, path::PathBuf, process::Stdio, str::FromStr};
 use tokio::process::Command;
 use tokio_stream::wrappers::ReadDirStream;
-use tracing_subscriber::layer::SubscriberExt;
-use tracing_subscriber::util::SubscriberInitExt;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 mod ffmpeg;
 mod framelist;
@@ -44,7 +43,10 @@ fn main() {
         None
     };
 
-    let _subscriber = tracing_subscriber::registry().with(console_layer).with(file_layer).init();
+    let _subscriber = tracing_subscriber::registry()
+        .with(console_layer)
+        .with(file_layer)
+        .init();
 
     let result = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -141,7 +143,7 @@ struct Args {
 
     /// Log additional data
     #[clap(long)]
-    extra_info: Vec<String>
+    extra_info: Vec<String>,
 }
 
 #[derive(Debug)]

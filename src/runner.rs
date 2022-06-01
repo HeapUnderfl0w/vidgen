@@ -107,7 +107,9 @@ impl Runner {
                 debug!("cleaned up");
 
                 Ok::<(), anyhow::Error>(())
-            }.instrument(frame_span).await?;
+            }
+            .instrument(frame_span)
+            .await?;
         }
 
         drop(stdin);
