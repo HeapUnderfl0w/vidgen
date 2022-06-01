@@ -1,11 +1,15 @@
+#[macro_use]
+extern crate tracing;
+
 use crate::{framelist::FrameList, runner::Message};
 use anyhow::Context;
 use clap::Parser;
 use futures::StreamExt;
-use indicatif::{ProgressBar, ProgressStyle};
-use std::{path::PathBuf, process::Stdio, str::FromStr};
+use std::{fs::File, path::PathBuf, process::Stdio, str::FromStr};
 use tokio::process::Command;
 use tokio_stream::wrappers::ReadDirStream;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
 
 mod ffmpeg;
 mod framelist;
@@ -17,6 +21,31 @@ fn main() {
     let args = Args::parse();
     let wait = args.wait;
 
+    let console_layer = tracing_subscriber::fmt::layer()
+        .with_ansi(true)
+        .with_thread_names(true)
+        .with_target(true);
+    let file_layer = if args.debug {
+        match File::create("vidgen.log") {
+            Ok(handle) => {
+                let file_log = tracing_subscriber::fmt::layer()
+                    .with_ansi(false)
+                    .with_thread_names(true)
+                    .with_target(true)
+                    .with_writer(handle);
+                Some(file_log)
+            },
+            Err(why) => {
+                eprintln!("ERROR!: Unable to create log output file: {:?}", why);
+                None
+            },
+        }
+    } else {
+        None
+    };
+
+    let _subscriber = tracing_subscriber::registry().with(console_layer).with(file_layer).init();
+
     let result = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .thread_name(concat!(env!("CARGO_PKG_NAME"), "-worker"))
@@ -25,7 +54,7 @@ fn main() {
         .block_on(program(args));
 
     if let Err(why) = result {
-        eprintln!("error: {:?}", why);
+        error!(?why, "error during execution");
         if wait {
             wait_before_exit();
         }
@@ -106,10 +135,13 @@ struct Args {
     #[clap(long)]
     audio: Option<AudioOptions>,
 
-	/// print the command line before executing
-	#[clap(long)]
-	debug: bool
+    /// print the command line before executing
+    #[clap(long)]
+    debug: bool,
 
+    /// Log additional data
+    #[clap(long)]
+    extra_info: Vec<String>
 }
 
 #[derive(Debug)]
@@ -161,15 +193,28 @@ macro_rules! ffarg {
 
 const DIM_AUTO: &str = "auto";
 async fn program(args: Args) -> anyhow::Result<()> {
+    info!("startup");
+
+    for line in args.extra_info {
+        info!(data=?line, "extra info");
+    }
+
     let ffmpeg = ffmpeg::ensure_ffmpeg_dir(args.ffmpeg.clone(), args.input_dim == DIM_AUTO)
         .await
         .context("ffmpeg discovery failed")?;
 
+    info!("reading source frame info");
     let (frame_width, frame_height): (u32, u32) = match args.input_dim.as_str() {
         v if v == DIM_AUTO => {
+            let span = warn_span!("frame-ident");
+            let _guard = span.enter();
+            info!("source frame size not set, identifying");
+
             let ident_frame = find_ident_frame(&args.source)
                 .await
                 .context("failed to find ident frame")?;
+
+            info!(ident_frame=%ident_frame);
 
             let data = Command::new(ffmpeg.ffprobe())
                 .args(&[
@@ -194,7 +239,9 @@ async fn program(args: Args) -> anyhow::Result<()> {
 
             let fdt: FfprobeRes = serde_json::from_slice(&data)
                 .context("failed to parse stream info from ffprobe")?;
-            (fdt.streams[0].width, fdt.streams[0].height)
+            let res = (fdt.streams[0].width, fdt.streams[0].height);
+            info!(size=?res);
+            res
         },
         exact => parse_resolution(exact).context("failed to parse input resolution")?,
     };
@@ -202,9 +249,13 @@ async fn program(args: Args) -> anyhow::Result<()> {
     let (target_width, target_height) =
         parse_resolution(&args.output_dim).context("failed to parse output resolution")?;
 
+    info!(target_size=?(target_width, target_height));
+
     let frames = FrameList::from_dir(&args.source)
         .await
         .context("failed to index frames")?;
+
+    info!(frame_count=%frames.frames.len());
 
     let mut com = Command::new(ffmpeg.ffmpeg());
     ffarg!(com, "-y");
@@ -214,10 +265,18 @@ async fn program(args: Args) -> anyhow::Result<()> {
     ffarg!(com, "-f", "image2pipe");
     ffarg!(com, "-i", "-");
     if let Some(audio) = args.audio {
+        info!(?audio.file, %audio.start, "requested audio, adding ffmpeg options");
         ffarg!(com, "-i", audio.file);
-		ffarg!(com, "-filter_complex", format!("[1:0]adelay={off}:all=1[ad];[ad]apad[a]", off = (audio.start * 1000.0).trunc() as u64));
-		ffarg!(com, "-map", "0:v:0");
-		ffarg!(com, "-map", "[a]");
+        ffarg!(
+            com,
+            "-filter_complex",
+            format!(
+                "[1:0]adelay={off}:all=1[ad];[ad]apad[a]",
+                off = (audio.start * 1000.0).trunc() as u64
+            )
+        );
+        ffarg!(com, "-map", "0:v:0");
+        ffarg!(com, "-map", "[a]");
         ffarg!(com, "-c:a", "aac");
         // ffarg!(com, "-to", target_duration.to_string());
     }
@@ -231,18 +290,23 @@ async fn program(args: Args) -> anyhow::Result<()> {
     );
 
     if let Some(tune) = args.x264_tune {
+        info!(?tune, "ffmpeg tuning");
         ffarg!(com, "-tune", tune.to_string());
     }
 
     if let Some(crf) = args.crf {
+        info!(?crf);
         ffarg!(com, "-crf", crf.0.to_string());
     }
 
     if let Some(extra_args) = args.extra_arg {
+        let span = warn_span!("extra-args");
+        let _guard = span.enter();
         for arg in extra_args {
             let mut p = arg.splitn(2, '=');
             let k = p.next().unwrap();
             let v = p.next();
+            info!(key=?k, value=?v, "extra option");
             match v {
                 Some(v) => ffarg!(com, k, v),
                 None => ffarg!(com, k),
@@ -250,7 +314,7 @@ async fn program(args: Args) -> anyhow::Result<()> {
         }
     }
 
-	ffarg!(com, "-shortest");
+    ffarg!(com, "-shortest");
     ffarg!(com, args.target);
 
     #[cfg(windows)]
@@ -259,10 +323,13 @@ async fn program(args: Args) -> anyhow::Result<()> {
         com.creation_flags(CREATE_NO_WINDOW);
     }
 
-	if args.debug { println!("ffmpeg encode = {com:?}"); }
+    if args.debug {
+        info!(command=?com, "ffmpeg encode");
+    }
 
     let source_path = PathBuf::from(args.source);
 
+    info!("starting runner");
     let mut runner = runner::Runner::start(com, frames).context("failed to start ffmpeg")?;
 
     let framen = match runner.event().await {
@@ -270,14 +337,8 @@ async fn program(args: Args) -> anyhow::Result<()> {
         _ => anyhow::bail!("somehow missed start message"),
     };
 
-    let pbar = ProgressBar::new(framen).with_style(
-        ProgressStyle::default_bar()
-            .progress_chars("#$-")
-            .template("ETA {eta} | {pos}/{len} [{wide_bar:.light.green/light.blue}] {msg}"),
-    );
-
     let quirks = if args.keysight {
-        pbar.println("entering keysight quirks mode");
+        warn!("entering keysight quirks mode");
 
         Some(quirks::KeysightQuirks::start(source_path, framen))
     } else {
@@ -286,21 +347,20 @@ async fn program(args: Args) -> anyhow::Result<()> {
 
     while let Some(event) = runner.event().await {
         match event {
-            Message::Frame { fid, path: _ } => {
+            Message::Frame { .. } => {
                 if let Some(q) = quirks.as_ref() {
                     q.push_msg(event)
                 }
-                pbar.set_message(format!("frame {}", fid));
-                pbar.inc(1);
             },
             Message::Stop { time } => {
-                pbar.println(format!(
+                let msg = format!(
                     "done, took {}",
                     indicatif::HumanDuration(std::time::Duration::new(
                         time.whole_seconds() as u64,
                         time.subsec_nanoseconds() as u32
                     ))
-                ));
+                );
+                info!("{}", msg);
                 break;
             },
             Message::Start { frames: _ } => unreachable!("should never appear twice"),
@@ -316,8 +376,6 @@ async fn program(args: Args) -> anyhow::Result<()> {
     Ok(())
 }
 
-
-
 fn parse_resolution(s: &str) -> anyhow::Result<(u32, u32)> {
     let p: Vec<_> = s.split('x').collect();
     if p.len() != 2 {
@@ -329,6 +387,7 @@ fn parse_resolution(s: &str) -> anyhow::Result<(u32, u32)> {
     Ok((w, h))
 }
 
+#[instrument]
 async fn find_ident_frame(path: &str) -> anyhow::Result<String> {
     let frame = ReadDirStream::new(
         tokio::fs::read_dir(path)
@@ -347,6 +406,7 @@ async fn find_ident_frame(path: &str) -> anyhow::Result<String> {
     .await;
 
     if frame.0 == u64::MAX {
+        error!("no valid init frame found");
         anyhow::bail!("no valid init frame found");
     }
 

@@ -8,6 +8,7 @@ use tokio::{
     sync::mpsc::{channel, Receiver, Sender},
     task::JoinHandle,
 };
+use tracing::Instrument;
 
 use crate::framelist::FrameList;
 
@@ -28,6 +29,7 @@ pub struct Runner {
 
 impl Runner {
     pub fn start(mut command: Command, frames: FrameList) -> anyhow::Result<RunnerHandle> {
+        info!("starting ffmpeg child");
         let child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
@@ -42,6 +44,7 @@ impl Runner {
             frames,
         };
 
+        info!("starting task");
         let handle = tokio::spawn(runner.run());
 
         Ok(RunnerHandle {
@@ -50,6 +53,7 @@ impl Runner {
         })
     }
 
+    #[instrument(skip(self), name = "ffmpeg")]
     async fn run(mut self) -> anyhow::Result<()> {
         let mut stdin = self
             .child
@@ -63,39 +67,64 @@ impl Runner {
                 .send(Message::Start {
                     frames: self.frames.frames.len() as u64,
                 })
+                .in_current_span()
                 .await
         );
 
-        for frame in &self.frames.frames {
-            snd_chk!(
-                self.notify
-                    .send(Message::Frame {
-                        fid:  frame.0,
-                        path: frame.1.display().to_string(),
-                    })
-                    .await
-            );
-            let mut file =
-                BufReader::new(File::open(&frame.1).await.context("failed to open frame")?);
-            tokio::io::copy_buf(&mut file, &mut stdin)
-                .await
-                .context("failed to stream frame")?;
+        info!("starting encoding");
 
-            fs::remove_file(&frame.1)
-                .await
-                .context("failed to remove frame")?;
+        for frame in &self.frames.frames {
+            let frame_span = error_span!("frame", id=%frame.0, source=?frame.1.display());
+            async {
+                snd_chk!(
+                    self.notify
+                        .send(Message::Frame {
+                            fid:  frame.0,
+                            path: frame.1.display().to_string(),
+                        })
+                        .await
+                );
+                debug!("opening file");
+                let mut file = BufReader::new(
+                    File::open(&frame.1)
+                        .in_current_span()
+                        .await
+                        .context("failed to open frame")?,
+                );
+
+                debug!("copy data");
+                tokio::io::copy_buf(&mut file, &mut stdin)
+                    .in_current_span()
+                    .await
+                    .context("failed to stream frame")?;
+
+                debug!("cleaning up");
+                fs::remove_file(&frame.1)
+                    .in_current_span()
+                    .await
+                    .context("failed to remove frame")?;
+
+                debug!("cleaned up");
+
+                Ok::<(), anyhow::Error>(())
+            }.instrument(frame_span).await?;
         }
 
         drop(stdin);
-        let _ = self.child.wait().await;
+
+        info!("waiting for ffmpeg to finish up");
+        let _ = self.child.wait().in_current_span().await;
 
         snd_chk!(
             self.notify
                 .send(Message::Stop {
                     time: ts_start.elapsed(),
                 })
+                .in_current_span()
                 .await
         );
+
+        info!("done encoding");
         Ok(())
     }
 }
