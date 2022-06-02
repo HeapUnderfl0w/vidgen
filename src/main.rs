@@ -25,7 +25,7 @@ fn main() {
         .with_thread_names(true)
         .with_target(true);
     let file_layer = if args.debug {
-        match File::create("vidgen.log") {
+        match File::create(std::path::Path::new(&args.source).join("_vidgen.log")) {
             Ok(handle) => {
                 let file_log = tracing_subscriber::fmt::layer()
                     .with_ansi(false)
@@ -349,9 +349,9 @@ async fn program(args: Args) -> anyhow::Result<()> {
 
     while let Some(event) = runner.event().await {
         match event {
-            Message::Frame { .. } => {
+            Message::Frame { fid, path } => {
                 if let Some(q) = quirks.as_ref() {
-                    q.push_msg(event)
+                    q.push_msg(quirks::QuirksMessage::Frame { fid, path });
                 }
             },
             Message::Stop { time } => {
@@ -369,13 +369,16 @@ async fn program(args: Args) -> anyhow::Result<()> {
         }
     }
 
-    runner.join().await.context("failed to wait for task")?;
-
+    let runner_res = runner.join().await.context("runner exited with error");
     if let Some(q) = quirks {
+        if let Err(err) = runner_res.as_ref() {
+            let msg = err.chain().map(|cause| format!("{:#}", cause)).collect();
+            q.push_msg(quirks::QuirksMessage::Error { error: msg });
+        }
         q.stop().await?;
     }
 
-    Ok(())
+    runner_res
 }
 
 fn parse_resolution(s: &str) -> anyhow::Result<(u32, u32)> {

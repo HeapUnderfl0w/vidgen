@@ -1,4 +1,3 @@
-use crate::runner::Message;
 use anyhow::Context;
 use std::{
     mem,
@@ -8,10 +7,18 @@ use std::{
 };
 use tokio::{sync::oneshot, task::JoinHandle};
 
+#[allow(dead_code)]
+pub enum QuirksMessage {
+    Start { frames: u64 },
+    Frame { fid: u64, path: String },
+    Stop { time: time::Duration },
+    Error { error: Vec<String> },
+}
+
 pub struct KeysightQuirks {
     path:    PathBuf,
     kill:    oneshot::Receiver<()>,
-    message: Arc<Mutex<Option<Message>>>,
+    message: Arc<Mutex<Option<QuirksMessage>>>,
     total:   u64,
 }
 
@@ -51,7 +58,13 @@ impl KeysightQuirks {
             tokio::select! {
                 biased;
                 _ = &mut self.kill => {
-                    e!(self.write_progress(frames, self.total, String::new(), true).await);
+                    let msg = mem::take(&mut *self.message.lock().unwrap());
+
+                    if let Some(QuirksMessage::Error { error }) = msg {
+                        e!(self.write_progress(frames, self.total, String::new(), Status::Error { error_chain: error }).await);
+                    } else {
+                        e!(self.write_progress(frames, self.total, String::new(), Status::Done).await);
+                    }
                     break;
                 },
                 _ = tokio::time::sleep(Duration::from_secs(1)) => {}
@@ -59,23 +72,36 @@ impl KeysightQuirks {
 
             let msg = mem::take(&mut *self.message.lock().unwrap());
             let (fid, pth) = match msg {
-                Some(Message::Frame { fid, path }) => (fid, path),
+                Some(QuirksMessage::Frame { fid, path }) => (fid, path),
+                Some(QuirksMessage::Error { error }) => {
+                    e!(self
+                        .write_progress(
+                            frames,
+                            self.total,
+                            String::new(),
+                            Status::Error { error_chain: error }
+                        )
+                        .await);
+                    break;
+                },
                 _ => continue,
             };
 
             frames = fid;
 
-            e!(self.write_progress(frames, self.total, pth, false).await);
+            e!(self
+                .write_progress(frames, self.total, pth, Status::Rendering)
+                .await);
         }
         Ok(())
     }
 
-    async fn write_progress(&self, f: u64, t: u64, p: String, d: bool) -> anyhow::Result<()> {
+    async fn write_progress(&self, f: u64, t: u64, p: String, s: Status) -> anyhow::Result<()> {
         let json = serde_json::to_string(&ProgressFile {
+            status: s,
             frames: f,
             total:  t,
             path:   p,
-            done:   d,
         })
         .context("failed to serialize json")?;
 
@@ -87,12 +113,12 @@ impl KeysightQuirks {
 
 pub struct KeysightQuirksHandle {
     task:   JoinHandle<anyhow::Result<()>>,
-    events: Arc<Mutex<Option<Message>>>,
+    events: Arc<Mutex<Option<QuirksMessage>>>,
     kill:   oneshot::Sender<()>,
 }
 
 impl KeysightQuirksHandle {
-    pub fn push_msg(&self, msg: Message) { *self.events.lock().unwrap() = Some(msg); }
+    pub fn push_msg(&self, msg: QuirksMessage) { *self.events.lock().unwrap() = Some(msg); }
 
     pub async fn stop(self) -> anyhow::Result<()> {
         let _ = self.kill.send(());
@@ -105,8 +131,17 @@ impl KeysightQuirksHandle {
 
 #[derive(Debug, serde::Serialize)]
 struct ProgressFile {
+    #[serde(flatten)]
+    status: Status,
     frames: u64,
     total:  u64,
     path:   String,
-    done:   bool,
+}
+
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "snake_case", tag = "status")]
+enum Status {
+    Rendering,
+    Done,
+    Error { error_chain: Vec<String> },
 }

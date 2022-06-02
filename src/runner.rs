@@ -75,7 +75,7 @@ impl Runner {
 
         for frame in &self.frames.frames {
             let frame_span = error_span!("frame", id=%frame.0, source=?frame.1.display());
-            async {
+            let result = async {
                 snd_chk!(
                     self.notify
                         .send(Message::Frame {
@@ -109,7 +109,12 @@ impl Runner {
                 Ok::<(), anyhow::Error>(())
             }
             .instrument(frame_span)
-            .await?;
+            .await;
+
+            if let Err(why) = result {
+                error!(current_frame=%frame.0, error=%why, "error while reading frame");
+                return Err(why);
+            }
         }
 
         drop(stdin);
