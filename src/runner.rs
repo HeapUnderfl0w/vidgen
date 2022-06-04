@@ -29,7 +29,7 @@ pub struct Runner {
 
 impl Runner {
     pub fn start(mut command: Command, frames: FrameList) -> anyhow::Result<RunnerHandle> {
-        info!("starting ffmpeg child");
+        debug!("starting ffmpeg child");
         let child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
@@ -44,7 +44,7 @@ impl Runner {
             frames,
         };
 
-        info!("starting task");
+        debug!("starting task");
         let handle = tokio::spawn(runner.run());
 
         Ok(RunnerHandle {
@@ -84,7 +84,7 @@ impl Runner {
                         })
                         .await
                 );
-                debug!("opening file");
+                trace!("opening file");
                 let mut file = BufReader::new(
                     File::open(&frame.1)
                         .in_current_span()
@@ -92,19 +92,19 @@ impl Runner {
                         .context("failed to open frame")?,
                 );
 
-                debug!("copy data");
+                trace!("copy data");
                 tokio::io::copy_buf(&mut file, &mut stdin)
                     .in_current_span()
                     .await
                     .context("failed to stream frame")?;
 
-                debug!("cleaning up");
+                trace!("cleaning up");
                 fs::remove_file(&frame.1)
                     .in_current_span()
                     .await
                     .context("failed to remove frame")?;
 
-                debug!("cleaned up");
+                trace!("cleaned up");
 
                 Ok::<(), anyhow::Error>(())
             }

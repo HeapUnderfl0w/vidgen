@@ -5,10 +5,11 @@ use crate::{framelist::FrameList, runner::Message};
 use anyhow::Context;
 use clap::Parser;
 use futures::StreamExt;
-use std::{fs::File, path::PathBuf, process::Stdio, str::FromStr};
+use std::{fmt, fs::File, path::PathBuf, process::Stdio, str::FromStr};
 use tokio::process::Command;
 use tokio_stream::wrappers::ReadDirStream;
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use tracing::metadata::LevelFilter;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, Layer};
 
 mod ffmpeg;
 mod framelist;
@@ -16,22 +17,47 @@ mod quirks;
 mod runner;
 mod x264;
 
+macro_rules! ffarg {
+    ($c:ident, $arg:expr) => {{
+        (&mut $c).arg($arg);
+    }};
+    ($c:ident, $arg:expr, $val:expr) => {{
+        (&mut $c).arg($arg).arg($val);
+    }};
+}
+
 fn main() {
     let args = Args::parse();
     let wait = args.wait;
 
+    let console_level = match args.debug {
+        DebugLevel::Off => LevelFilter::ERROR,
+        DebugLevel::Terse => LevelFilter::WARN,
+        DebugLevel::Extra => LevelFilter::INFO,
+        DebugLevel::Full => LevelFilter::TRACE,
+    };
+
+    let file_level = match args.debug {
+        DebugLevel::Off => LevelFilter::WARN,
+        DebugLevel::Terse => LevelFilter::INFO,
+        DebugLevel::Extra => LevelFilter::DEBUG,
+        DebugLevel::Full => LevelFilter::TRACE,
+    };
+
     let console_layer = tracing_subscriber::fmt::layer()
         .with_ansi(true)
         .with_thread_names(true)
-        .with_target(true);
-    let file_layer = if args.debug {
+        .with_target(true)
+        .with_filter(console_level);
+    let file_layer = if args.debug.enabled() {
         match File::create(std::path::Path::new(&args.source).join("_vidgen.log")) {
             Ok(handle) => {
                 let file_log = tracing_subscriber::fmt::layer()
                     .with_ansi(false)
                     .with_thread_names(true)
                     .with_target(true)
-                    .with_writer(handle);
+                    .with_writer(handle)
+                    .with_filter(file_level);
                 Some(file_log)
             },
             Err(why) => {
@@ -79,118 +105,6 @@ fn wait_before_exit() {
     let mut _garbage = String::new();
     read.read_line(&mut _garbage)
         .expect("failed to read any input from stdin");
-}
-
-/// Encode a pile of frames into a video file.
-#[derive(Debug, clap::Parser)]
-#[clap(version = env!("CARGO_PKG_VERSION"), name = env!("CARGO_PKG_NAME"), author = env!("CARGO_PKG_AUTHORS"))]
-struct Args {
-    /// The source directory to read frames from
-    #[clap()]
-    source: String,
-
-    /// The target file to write to. This will truncate by default
-    #[clap()]
-    target: String,
-
-    /// Dimensions of the frame files
-    #[clap(short, long = "input-dim", default_value = "auto")]
-    input_dim: String,
-
-    /// Dimensions of the output video
-    #[clap(short, long = "output-dim", default_value = "1920x1080")]
-    output_dim: String,
-
-    /// Target fps
-    #[clap(short, long = "fps", default_value = "60")]
-    fps: u16,
-
-    /// Instruct the encoder to use the given constant bitrate
-    #[clap(long, parse(try_from_str=x264::Crf::parse))]
-    crf: Option<x264::Crf>,
-
-    /// Extra args passed as-is to ffmpeg. They will be included after the default arguments but before the output argument
-    #[clap(long)]
-    extra_arg: Option<Vec<String>>,
-
-    /// Override the path to the ffmpeg binary directory (it should contain ffmpeg and ffprobe)
-    #[clap(long)]
-    ffmpeg: Option<String>,
-
-    /// The x264 encoder preset to use
-    #[clap(long, arg_enum, default_value = "medium", name = "PRESET")]
-    x264_preset: x264::X264Preset,
-
-    /// The x264 encoder tuning to use
-    #[clap(long, arg_enum, name = "TUNING")]
-    x264_tune: Option<x264::X264Tune>,
-
-    /// Wait for the user to press a button before exiting
-    #[clap(short, long)]
-    wait: bool,
-
-    /// Switch to keysight quirks mode
-    #[clap(long)]
-    keysight: bool,
-
-    /// Splice audio into video.
-    #[clap(long)]
-    audio: Option<AudioOptions>,
-
-    /// print the command line before executing
-    #[clap(long)]
-    debug: bool,
-
-    /// Log additional data
-    #[clap(long)]
-    extra_info: Vec<String>,
-}
-
-#[derive(Debug)]
-struct AudioOptions {
-    start: f64,
-    file:  PathBuf,
-}
-
-impl FromStr for AudioOptions {
-    type Err = anyhow::Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let mut fsplit = s.split(',');
-
-        let ts = fsplit.next().context("why the fuck?")?;
-        let path = fsplit
-            .next()
-            .context("missing file path for audio file")?
-            .parse()
-            .context("the given path contains invalid characters")?;
-
-        let start = ts
-            .parse()
-            .context("the start time needs to be the offset in milliseconds")?;
-
-        Ok(AudioOptions { start, file: path })
-    }
-}
-
-#[derive(Debug, serde::Deserialize)]
-struct StreamData {
-    width:  u32,
-    height: u32,
-}
-
-#[derive(Debug, serde::Deserialize)]
-struct FfprobeRes {
-    streams: [StreamData; 1],
-}
-
-macro_rules! ffarg {
-    ($c:ident, $arg:expr) => {{
-        (&mut $c).arg($arg);
-    }};
-    ($c:ident, $arg:expr, $val:expr) => {{
-        (&mut $c).arg($arg).arg($val);
-    }};
 }
 
 const DIM_AUTO: &str = "auto";
@@ -325,8 +239,8 @@ async fn program(args: Args) -> anyhow::Result<()> {
         com.creation_flags(CREATE_NO_WINDOW);
     }
 
-    if args.debug {
-        info!(command=?com, "ffmpeg encode");
+    if args.debug.enabled() {
+        debug!(command=?com, "ffmpeg encode");
     }
 
     let source_path = PathBuf::from(args.source);
@@ -416,4 +330,132 @@ async fn find_ident_frame(path: &str) -> anyhow::Result<String> {
     }
 
     Ok(frame.1.display().to_string())
+}
+
+/// Encode a pile of frames into a video file.
+#[derive(Debug, clap::Parser)]
+#[clap(version = env!("CARGO_PKG_VERSION"), name = env!("CARGO_PKG_NAME"), author = env!("CARGO_PKG_AUTHORS"))]
+struct Args {
+    /// The source directory to read frames from
+    #[clap()]
+    source: String,
+
+    /// The target file to write to. This will truncate by default
+    #[clap()]
+    target: String,
+
+    /// Dimensions of the frame files
+    #[clap(short, long = "input-dim", default_value = "auto")]
+    input_dim: String,
+
+    /// Dimensions of the output video
+    #[clap(short, long = "output-dim", default_value = "1920x1080")]
+    output_dim: String,
+
+    /// Target fps
+    #[clap(short, long = "fps", default_value = "60")]
+    fps: u16,
+
+    /// Instruct the encoder to use the given constant bitrate
+    #[clap(long, parse(try_from_str=x264::Crf::parse))]
+    crf: Option<x264::Crf>,
+
+    /// Extra args passed as-is to ffmpeg. They will be included after the default arguments but before the output argument
+    #[clap(long)]
+    extra_arg: Option<Vec<String>>,
+
+    /// Override the path to the ffmpeg binary directory (it should contain ffmpeg and ffprobe)
+    #[clap(long)]
+    ffmpeg: Option<String>,
+
+    /// The x264 encoder preset to use
+    #[clap(long, arg_enum, default_value = "medium", name = "PRESET")]
+    x264_preset: x264::X264Preset,
+
+    /// The x264 encoder tuning to use
+    #[clap(long, arg_enum, name = "TUNING")]
+    x264_tune: Option<x264::X264Tune>,
+
+    /// Wait for the user to press a button before exiting
+    #[clap(short, long)]
+    wait: bool,
+
+    /// Switch to keysight quirks mode
+    #[clap(long)]
+    keysight: bool,
+
+    /// Splice audio into video.
+    #[clap(long)]
+    audio: Option<AudioOptions>,
+
+    /// emit debug information to both stdout and a file
+    #[clap(arg_enum, long, default_value = "off")]
+    debug: DebugLevel,
+
+    /// Log additional data
+    #[clap(long)]
+    extra_info: Vec<String>,
+}
+
+#[derive(Debug)]
+struct AudioOptions {
+    start: f64,
+    file:  PathBuf,
+}
+
+impl FromStr for AudioOptions {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let mut fsplit = s.split(',');
+
+        let ts = fsplit.next().context("why the fuck?")?;
+        let path = fsplit
+            .next()
+            .context("missing file path for audio file")?
+            .parse()
+            .context("the given path contains invalid characters")?;
+
+        let start = ts
+            .parse()
+            .context("the start time needs to be the offset in milliseconds")?;
+
+        Ok(AudioOptions { start, file: path })
+    }
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct StreamData {
+    width:  u32,
+    height: u32,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct FfprobeRes {
+    streams: [StreamData; 1],
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq, clap::ArgEnum)]
+pub enum DebugLevel {
+    Off,
+    Terse,
+    Extra,
+    Full,
+}
+
+impl fmt::Display for DebugLevel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            DebugLevel::Off => "off",
+            DebugLevel::Terse => "terse",
+            DebugLevel::Extra => "extra",
+            DebugLevel::Full => "full",
+        };
+
+        write!(f, "{}", s)
+    }
+}
+
+impl DebugLevel {
+    pub fn enabled(&self) -> bool { *self != DebugLevel::Off }
 }
