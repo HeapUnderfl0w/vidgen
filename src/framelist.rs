@@ -2,18 +2,24 @@ use anyhow::Context;
 use futures::StreamExt;
 use once_cell::sync::Lazy;
 use regex::Regex;
-use std::path::PathBuf;
+use std::{cmp::Ordering, path::PathBuf};
 use tokio_stream::wrappers::ReadDirStream;
 
 pub static NAME_REGEX: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(\d+)\.\w{3,4}").expect("compiled regex is invalid"));
 
-#[derive(Debug, Eq, PartialEq, Ord)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct Frame(pub u64, pub PathBuf);
 
 impl PartialOrd for Frame {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         self.0.partial_cmp(&other.0)
+    }
+}
+
+impl Ord for Frame {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.partial_cmp(other).unwrap_or(Ordering::Less)
     }
 }
 
