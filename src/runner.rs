@@ -25,10 +25,16 @@ pub struct Runner {
     child:  Child,
     notify: Sender<Message>,
     frames: FrameList,
+
+    delete_quirk: bool,
 }
 
 impl Runner {
-    pub fn start(mut command: Command, frames: FrameList) -> anyhow::Result<RunnerHandle> {
+    pub fn start(
+        mut command: Command,
+        frames: FrameList,
+        delete_quirk: bool,
+    ) -> anyhow::Result<RunnerHandle> {
         debug!("starting ffmpeg child");
         let child = command
             .stdin(Stdio::piped())
@@ -42,6 +48,7 @@ impl Runner {
             child,
             notify: notify_tx,
             frames,
+            delete_quirk,
         };
 
         debug!("starting task");
@@ -99,10 +106,16 @@ impl Runner {
                     .context("failed to stream frame")?;
 
                 trace!("cleaning up");
-                fs::remove_file(&frame.1)
+                let rmfr = fs::remove_file(&frame.1)
                     .in_current_span()
                     .await
-                    .context("failed to remove frame")?;
+                    .context("failed to remove frame");
+
+                if self.delete_quirk {
+                    warn!(n=%frame.0, e=?rmfr, "failed to delete frame");
+                } else {
+                    let _ = rmfr?;
+                }
 
                 trace!("cleaned up");
 

@@ -69,7 +69,7 @@ fn main() {
         None
     };
 
-    let _subscriber = tracing_subscriber::registry()
+    tracing_subscriber::registry()
         .with(console_layer)
         .with(file_layer)
         .init();
@@ -246,17 +246,25 @@ async fn program(args: Args) -> anyhow::Result<()> {
     let source_path = PathBuf::from(args.source);
 
     info!("starting runner");
-    let mut runner = runner::Runner::start(com, frames).context("failed to start ffmpeg")?;
+    let mut runner = runner::Runner::start(
+        com,
+        frames,
+        args.keysight.map(|v| v.delete_no_error).unwrap_or(false),
+    )
+    .context("failed to start ffmpeg")?;
 
     let framen = match runner.event().await {
         Some(Message::Start { frames }) => frames,
         _ => anyhow::bail!("somehow missed start message"),
     };
 
-    let quirks = if args.keysight {
-        warn!("entering keysight quirks mode");
-
-        Some(quirks::KeysightQuirks::start(source_path, framen))
+    let quirks = if let Some(ks) = args.keysight {
+        warn!(config=%ks, "entering quirks mode");
+        if ks.progress {
+            Some(quirks::KeysightQuirks::start(source_path, framen))
+        } else {
+            None
+        }
     } else {
         None
     };
@@ -380,9 +388,9 @@ struct Args {
     #[clap(short, long)]
     wait: bool,
 
-    /// Switch to keysight quirks mode
+    /// Switch to keysight quirks mode. Avaliable options: progress, delete-no-error
     #[clap(long)]
-    keysight: bool,
+    keysight: Option<quirks::KeysightQuirksOptions>,
 
     /// Splice audio into video.
     #[clap(long)]

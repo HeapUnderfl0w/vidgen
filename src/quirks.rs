@@ -1,11 +1,54 @@
 use anyhow::Context;
 use std::{
+    fmt,
     mem,
     path::PathBuf,
+    str::FromStr,
     sync::{Arc, Mutex},
     time::Duration,
 };
 use tokio::{sync::oneshot, task::JoinHandle};
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct KeysightQuirksOptions {
+    pub progress:        bool,
+    pub delete_no_error: bool,
+}
+
+fn fmt_bool(v: bool) -> &'static str {
+    if v {
+        "yes"
+    } else {
+        "no"
+    }
+}
+
+impl fmt::Display for KeysightQuirksOptions {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "Quirks[Keysight, progress = {}, delete-no-error = {}]",
+            fmt_bool(self.progress),
+            fmt_bool(self.delete_no_error)
+        )
+    }
+}
+
+impl FromStr for KeysightQuirksOptions {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let mut opts = KeysightQuirksOptions::default();
+        for f in s.split(',').map(|v| v.trim()) {
+            match f {
+                "progress" => opts.progress = true,
+                "delete-no-error" => opts.delete_no_error = true,
+                _ => continue,
+            }
+        }
+        Ok(opts)
+    }
+}
 
 #[allow(dead_code)]
 pub enum QuirksMessage {
