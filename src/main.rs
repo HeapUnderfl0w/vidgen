@@ -415,7 +415,7 @@ impl FromStr for AudioOptions {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let mut fsplit = s.split(',');
+        let mut fsplit = s.splitn(2, '|');
 
         let ts = fsplit.next().context("why the fuck?")?;
         let path = fsplit
