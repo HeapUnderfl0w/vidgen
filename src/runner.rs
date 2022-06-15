@@ -111,10 +111,12 @@ impl Runner {
                     .await
                     .context("failed to remove frame");
 
-                if self.delete_quirk {
-                    warn!(n=%frame.0, e=?rmfr, "failed to delete frame");
-                } else {
-                    rmfr?;
+                if let Err(why) = rmfr {
+                    if self.delete_quirk {
+                        warn!(n=%frame.0, e=?why, "failed to delete frame");
+                    } else {
+                        return Err(why);
+                    }
                 }
 
                 trace!("cleaned up");
