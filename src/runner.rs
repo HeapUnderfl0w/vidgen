@@ -114,7 +114,7 @@ impl Runner {
                 if self.delete_quirk {
                     warn!(n=%frame.0, e=?rmfr, "failed to delete frame");
                 } else {
-                    let _ = rmfr?;
+                    rmfr?;
                 }
 
                 trace!("cleaned up");
