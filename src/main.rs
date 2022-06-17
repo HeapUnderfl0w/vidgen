@@ -194,7 +194,9 @@ async fn program(args: Args) -> anyhow::Result<()> {
         ffarg!(com, "-map", "0:v:0");
         ffarg!(com, "-map", "[a]");
         ffarg!(com, "-c:a", "aac");
-        // ffarg!(com, "-to", target_duration.to_string());
+        if let Some(bitrate) = audio.bitrate {
+            ffarg!(com, "-b:a", bitrate);
+        }
     }
     ffarg!(com, "-c:v", "libx264");
     ffarg!(com, "-pix_fmt", "yuv420p");
@@ -393,6 +395,8 @@ struct Args {
     keysight: Option<quirks::KeysightQuirksOptions>,
 
     /// Splice audio into video.
+    /// 
+    /// format: offset[,bitrate]|file
     #[clap(long)]
     audio: Option<AudioOptions>,
 
@@ -409,6 +413,7 @@ struct Args {
 struct AudioOptions {
     start: f64,
     file:  PathBuf,
+    bitrate: Option<String>
 }
 
 impl FromStr for AudioOptions {
@@ -424,11 +429,18 @@ impl FromStr for AudioOptions {
             .parse()
             .context("the given path contains invalid characters")?;
 
-        let start = ts
+        let mut option_parts = ts.split(',');
+
+        // the unwrap here will always succeed as split returns at least 1 element
+        let start = option_parts
+            .next()
+            .unwrap()
             .parse()
             .context("the start time needs to be the offset in milliseconds")?;
 
-        Ok(AudioOptions { start, file: path })
+        let br = option_parts.next().map(String::from);
+
+        Ok(AudioOptions { start, bitrate: br, file: path })
     }
 }
 
